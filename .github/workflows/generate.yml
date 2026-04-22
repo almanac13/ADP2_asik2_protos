@@ -1,0 +1,81 @@
+name: Generate Go Protobuf Code
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proto/**/*.proto'
+      - '.github/workflows/generate.yml'
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout protos repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '29.3'
+
+      - name: Install Go plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Generate protobuf code
+        run: |
+          mkdir -p gen
+          protoc \
+            --proto_path=proto \
+            --go_out=gen \
+            --go-grpc_out=gen \
+            proto/payment.proto proto/order_tracking.proto
+
+      - name: Prepare generated files
+        run: |
+          mkdir -p out
+          cp -r gen/github.com/almanac13/ADP2_asik2_generated/* out/
+
+      - name: Checkout generated repo
+        uses: actions/checkout@v4
+        with:
+          repository: almanac13/ADP2_asik2_generated
+          path: generated-repo
+          token: ${{ secrets.GENERATED_REPO_TOKEN }}
+
+      - name: Replace generated repo contents
+        run: |
+          rm -rf generated-repo/payment generated-repo/ordertracking
+          cp -r out/payment generated-repo/
+          cp -r out/ordertracking generated-repo/
+
+      - name: Ensure go.mod exists
+        run: |
+          cat > generated-repo/go.mod <<'EOF'
+          module github.com/almanac13/ADP2_asik2_generated
+
+          go 1.22
+
+          require (
+          	google.golang.org/grpc v1.76.0
+          	google.golang.org/protobuf v1.36.10
+          )
+          EOF
+
+      - name: Commit and push generated code
+        run: |
+          cd generated-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "auto-generate protobuf code"
+          git push
